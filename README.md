@@ -1,6 +1,6 @@
-# Tutorial: Building and Hosting a Standalone Angular 19 Blog Application on AWS with Custom Routing
+# Tutorial: Building and Hosting a Styled Standalone Angular 19 Blog Application on AWS with Reactive Forms
 
-This tutorial updates the previous guide to create an **Angular 19** standalone application with **Home**, **About**, **Profile**, and **Blog pages**, supporting dynamic blog post management (create, edit, delete) using **reactive forms** (no `NgModel`). It aligns with your existing `main.ts` and `app.config.ts` structure, using a separate `app.routes.ts` file for routing, and hosts the app on **AWS S3 + CloudFront** with a serverless backend (**API Gateway + Lambda + DynamoDB**) and optional **Route 53** for a custom domain. It minimizes **PUT charges** by zipping Angular source for archival storage in S3 Glacier/Deep Archive (not in the AWS free tier) and integrates with your school file storage (documents, videos, Angular projects).
+This tutorial creates a styled **Angular 19** standalone application with **Home**, **About**, **Profile**, and **Blog pages**, supporting dynamic blog post management (create, edit, delete) using **reactive forms** (no `NgModel`). It aligns with your `main.ts`, `app.config.ts`, and `app.routes.ts` structure, correctly using `ReactiveFormsModule` (no `provideReactiveForms`). The app is hosted on **AWS S3 + CloudFront** with a serverless backend (**API Gateway + Lambda + DynamoDB**) and optional **Route 53** for a custom domain. It minimizes **PUT charges** by zipping Angular source for archival storage in S3 Glacier/Deep Archive (not in the AWS free tier) and integrates with your school file storage (documents, videos, Angular projects). The styling uses a dark theme with responsive design.
 
 ## Prerequisites
 - **Node.js** (v18+): Install from [nodejs.org](https://nodejs.org).
@@ -15,7 +15,7 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
    ```bash
    ng new blog-app --standalone --routing --style=css
    ```
-   - Confirms your standalone setup with routing and CSS.
+   - Confirms standalone setup with routing and CSS.
 2. **Generate Components and Service**:
    ```bash
    ng generate component home --standalone
@@ -31,8 +31,71 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
    - `blog`: Lists blog posts.
    - `admin`: Form for creating/editing/deleting posts.
    - `blog.service`: Handles API calls.
-3. **Update Routing**:
-   - Edit `app.routes.ts` (aligns with your setup):
+3. **Set Up Global Styles**:
+   - Edit `src/styles.css`:
+     ```css
+     * {
+       margin: 0;
+       padding: 0;
+       box-sizing: border-box;
+     }
+
+     body {
+       font-family: 'Arial', sans-serif;
+       background-color: #1a1a1a;
+       color: #e0e0e0;
+       line-height: 1.6;
+     }
+
+     a {
+       color: #007bff;
+       text-decoration: none;
+     }
+
+     a:hover {
+       color: #0056b3;
+     }
+
+     .container {
+       max-width: 1200px;
+       margin: 0 auto;
+       padding: 20px;
+     }
+
+     nav {
+       background-color: #2c2c2c;
+       padding: 10px 20px;
+       position: fixed;
+       top: 0;
+       width: 100%;
+       z-index: 1000;
+       box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+     }
+
+     nav a {
+       margin-right: 20px;
+       font-weight: bold;
+     }
+
+     nav a:hover {
+       color: #ffffff;
+     }
+
+     @media (max-width: 600px) {
+       nav {
+         padding: 10px;
+       }
+       nav a {
+         margin-right: 10px;
+         font-size: 14px;
+       }
+       .container {
+         padding: 10px;
+       }
+     }
+     ```
+4. **Update Routing**:
+   - Edit `app.routes.ts`:
      ```typescript
      import { Routes } from '@angular/router';
      import { HomeComponent } from './home/home.component';
@@ -50,27 +113,25 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
        { path: '**', redirectTo: '' }
      ];
      ```
-   - Includes a wildcard route for 404 handling.
-4. **Update App Config**:
-   - Edit `app.config.ts` to include `provideHttpClient` and `provideReactiveForms`:
+5. **Update App Config**:
+   - Edit `app.config.ts`:
      ```typescript
      import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
      import { provideRouter } from '@angular/router';
      import { provideHttpClient } from '@angular/common/http';
-     import { provideReactiveForms } from '@angular/forms';
      import { routes } from './app.routes';
 
      export const appConfig: ApplicationConfig = {
        providers: [
          provideZoneChangeDetection({ eventCoalescing: true }),
          provideRouter(routes),
-         provideHttpClient(),
-         provideReactiveForms()
+         provideHttpClient()
        ]
      };
      ```
-5. **Update Main**:
-   - Ensure `main.ts` matches your setup:
+     - Removes `provideReactiveForms` (does not exist); `ReactiveFormsModule` is imported in `AdminComponent`.
+6. **Update Main**:
+   - Ensure `main.ts` matches:
      ```typescript
      import { bootstrapApplication } from '@angular/platform-browser';
      import { AppComponent } from './app/app.component';
@@ -78,7 +139,7 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
 
      bootstrapApplication(AppComponent, appConfig);
      ```
-6. **Create Blog Service**:
+7. **Create Blog Service**:
    - Edit `blog.service.ts`:
      ```typescript
      import { Injectable } from '@angular/core';
@@ -121,14 +182,50 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
      }
      ```
    - Replace `<your-api-id>` and `<region>` with your API Gateway endpoint (set later).
-7. **Implement Components**:
-   - **Home** (`home.component.html`):
-     ```html
-     <h1>Welcome to My Blog</h1>
-     <p>Explore my posts, about, and profile!</p>
-     <a routerLink="/blog">View Blog</a>
-     ```
-     - Edit `home.component.ts`:
+8. **Implement Components**:
+   - **Home**:
+     - `home.component.html`:
+       ```html
+       <div class="container">
+         <h1>Welcome to My Blog</h1>
+         <p>Explore my posts, about, and profile!</p>
+         <a routerLink="/blog" class="btn">View Blog</a>
+       </div>
+       ```
+     - `home.component.css`:
+       ```css
+       .container {
+         text-align: center;
+         padding-top: 80px;
+       }
+       h1 {
+         font-size: 2.5rem;
+         margin-bottom: 20px;
+       }
+       p {
+         font-size: 1.2rem;
+         margin-bottom: 30px;
+       }
+       .btn {
+         background-color: #007bff;
+         color: #ffffff;
+         padding: 10px 20px;
+         border-radius: 5px;
+         font-weight: bold;
+       }
+       .btn:hover {
+         background-color: #0056b3;
+       }
+       @media (max-width: 600px) {
+         h1 {
+           font-size: 2rem;
+         }
+         p {
+           font-size: 1rem;
+         }
+       }
+       ```
+     - `home.component.ts`:
        ```typescript
        import { Component } from '@angular/core';
        import { RouterLink } from '@angular/router';
@@ -137,34 +234,101 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
          selector: 'app-home',
          standalone: true,
          imports: [RouterLink],
-         templateUrl: './home.component.html'
+         templateUrl: './home.component.html',
+         styleUrls: ['./home.component.css']
        })
        export class HomeComponent {}
        ```
-   - **About** (`about.component.html`):
-     ```html
-     <h1>About</h1>
-     <p>This blog shares my academic and coding journey.</p>
-     ```
-     - Edit `about.component.ts`:
+   - **About**:
+     - `about.component.html`:
+       ```html
+       <div class="container">
+         <h1>About</h1>
+         <p>This blog shares my academic and coding journey as an ICT Master's student.</p>
+       </div>
+       ```
+     - `about.component.css`:
+       ```css
+       .container {
+         padding-top: 80px;
+       }
+       h1 {
+         font-size: 2rem;
+         margin-bottom: 20px;
+       }
+       p {
+         font-size: 1.1rem;
+         max-width: 800px;
+         margin: 0 auto;
+       }
+       @media (max-width: 600px) {
+         h1 {
+           font-size: 1.8rem;
+         }
+         p {
+           font-size: 1rem;
+         }
+       }
+       ```
+     - `about.component.ts`:
        ```typescript
        import { Component } from '@angular/core';
 
        @Component({
          selector: 'app-about',
          standalone: true,
-         templateUrl: './about.component.html'
+         templateUrl: './about.component.html',
+         styleUrls: ['./about.component.css']
        })
        export class AboutComponent {}
        ```
-   - **Profile** (`profile.component.html`):
-     ```html
-     <h1>Profile</h1>
-     <p>Name: [Your Name]</p>
-     <p>Background: ICT Master's, Angular Developer</p>
-     <p>Projects: <a routerLink="/blog">See my blog posts</a></p>
-     ```
-     - Edit `profile.component.ts`:
+   - **Profile**:
+     - `profile.component.html`:
+       ```html
+       <div class="container">
+         <h1>Profile</h1>
+         <div class="profile-card">
+           <p><strong>Name:</strong> [Your Name]</p>
+           <p><strong>Background:</strong> ICT Master's, Angular Developer</p>
+           <p><strong>Projects:</strong> <a routerLink="/blog">See my blog posts</a></p>
+         </div>
+       </div>
+       ```
+     - `profile.component.css`:
+       ```css
+       .container {
+         padding-top: 80px;
+       }
+       h1 {
+         font-size: 2rem;
+         margin-bottom: 20px;
+         text-align: center;
+       }
+       .profile-card {
+         background-color: #2c2c2c;
+         padding: 20px;
+         border-radius: 10px;
+         max-width: 600px;
+         margin: 0 auto;
+         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+       }
+       p {
+         font-size: 1.1rem;
+         margin-bottom: 10px;
+       }
+       @media (max-width: 600px) {
+         h1 {
+           font-size: 1.8rem;
+         }
+         .profile-card {
+           padding: 15px;
+         }
+         p {
+           font-size: 1rem;
+         }
+       }
+       ```
+     - `profile.component.ts`:
        ```typescript
        import { Component } from '@angular/core';
        import { RouterLink } from '@angular/router';
@@ -173,21 +337,85 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
          selector: 'app-profile',
          standalone: true,
          imports: [RouterLink],
-         templateUrl: './profile.component.html'
+         templateUrl: './profile.component.html',
+         styleUrls: ['./profile.component.css']
        })
        export class ProfileComponent {}
        ```
-   - **Blog** (`blog.component.html`):
-     ```html
-     <h1>Blog Posts</h1>
-     <div *ngFor="let post of posts">
-       <h3>{{ post.title }}</h3>
-       <p>{{ post.content }}</p>
-       <img *ngIf="post.imageUrl" [src]="post.imageUrl" alt="Post Image">
-     </div>
-     <a routerLink="/admin">Manage Posts</a>
-     ```
-     - Edit `blog.component.ts`:
+   - **Blog**:
+     - `blog.component.html`:
+       ```html
+       <div class="container">
+         <h1>Blog Posts</h1>
+         <div class="post-grid">
+           <div class="post-card" *ngFor="let post of posts">
+             <h3>{{ post.title }}</h3>
+             <p>{{ post.content }}</p>
+             <img *ngIf="post.imageUrl" [src]="post.imageUrl" alt="Post Image">
+           </div>
+         </div>
+         <a routerLink="/admin" class="btn">Manage Posts</a>
+       </div>
+       ```
+     - `blog.component.css`:
+       ```css
+       .container {
+         padding-top: 80px;
+       }
+       h1 {
+         font-size: 2rem;
+         margin-bottom: 20px;
+         text-align: center;
+       }
+       .post-grid {
+         display: grid;
+         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+         gap: 20px;
+       }
+       .post-card {
+         background-color: #2c2c2c;
+         padding: 20px;
+         border-radius: 10px;
+         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+       }
+       .post-card h3 {
+         font-size: 1.5rem;
+         margin-bottom: 10px;
+       }
+       .post-card p {
+         font-size: 1rem;
+         margin-bottom: 10px;
+       }
+       .post-card img {
+         max-width: 100%;
+         border-radius: 5px;
+       }
+       .btn {
+         display: inline-block;
+         background-color: #007bff;
+         color: #ffffff;
+         padding: 10px 20px;
+         border-radius: 5px;
+         font-weight: bold;
+         text-align: center;
+         margin-top: 20px;
+       }
+       .btn:hover {
+         background-color: #0056b3;
+       }
+       @media (max-width: 600px) {
+         h1 {
+           font-size: 1.8rem;
+         }
+         .post-grid {
+           grid-template-columns: 1fr;
+         }
+         .post-card {
+           padding: 15px;
+         }
+       }
+       ```
+     - `blog.component.ts`:
        ```typescript
        import { Component, OnInit } from '@angular/core';
        import { CommonModule } from '@angular/common';
@@ -198,7 +426,8 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
          selector: 'app-blog',
          standalone: true,
          imports: [CommonModule, RouterLink],
-         templateUrl: './blog.component.html'
+         templateUrl: './blog.component.html',
+         styleUrls: ['./blog.component.css']
        })
        export class BlogComponent implements OnInit {
          posts: BlogPost[] = [];
@@ -210,24 +439,131 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
          }
        }
        ```
-   - **Admin** (reactive forms, `admin.component.html`):
-     ```html
-     <h1>Manage Posts</h1>
-     <form [formGroup]="postForm" (ngSubmit)="savePost()">
-       <input formControlName="postId" placeholder="Post ID" readonly>
-       <input formControlName="title" placeholder="Title" required>
-       <textarea formControlName="content" placeholder="Content" required></textarea>
-       <input formControlName="imageUrl" placeholder="Image URL">
-       <button type="submit" [disabled]="postForm.invalid">Save</button>
-       <button type="button" (click)="resetForm()">Clear</button>
-     </form>
-     <div *ngFor="let post of posts">
-       <h3>{{ post.title }}</h3>
-       <button (click)="editPost(post)">Edit</button>
-       <button (click)="deletePost(post.postId)">Delete</button>
-     </div>
-     ```
-     - Edit `admin.component.ts`:
+   - **Admin**:
+     - `admin.component.html`:
+       ```html
+       <div class="container">
+         <h1>Manage Posts</h1>
+         <form [formGroup]="postForm" (ngSubmit)="savePost()" class="post-form">
+           <input formControlName="postId" placeholder="Post ID" readonly>
+           <input formControlName="title" placeholder="Title" required>
+           <textarea formControlName="content" placeholder="Content" required></textarea>
+           <input formControlName="imageUrl" placeholder="Image URL">
+           <div class="form-buttons">
+             <button type="submit" [disabled]="postForm.invalid" class="btn">Save</button>
+             <button type="button" (click)="resetForm()" class="btn btn-secondary">Clear</button>
+           </div>
+         </form>
+         <div class="post-grid">
+           <div class="post-card" *ngFor="let post of posts">
+             <h3>{{ post.title }}</h3>
+             <div class="post-actions">
+               <button (click)="editPost(post)" class="btn btn-small">Edit</button>
+               <button (click)="deletePost(post.postId)" class="btn btn-small btn-danger">Delete</button>
+             </div>
+           </div>
+         </div>
+       </div>
+       ```
+     - `admin.component.css`:
+       ```css
+       .container {
+         padding-top: 80px;
+       }
+       h1 {
+         font-size: 2rem;
+         margin-bottom: 20px;
+         text-align: center;
+       }
+       .post-form {
+         background-color: #2c2c2c;
+         padding: 20px;
+         border-radius: 10px;
+         max-width: 600px;
+         margin: 0 auto 30px;
+         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+       }
+       .post-form input,
+       .post-form textarea {
+         width: 100%;
+         padding: 10px;
+         margin-bottom: 15px;
+         border: 1px solid #444;
+         border-radius: 5px;
+         background-color: #333;
+         color: #e0e0e0;
+         font-size: 1rem;
+       }
+       .post-form textarea {
+         min-height: 100px;
+       }
+       .form-buttons {
+         display: flex;
+         gap: 10px;
+       }
+       .btn {
+         background-color: #007bff;
+         color: #ffffff;
+         padding: 10px 20px;
+         border: none;
+         border-radius: 5px;
+         cursor: pointer;
+         font-weight: bold;
+       }
+       .btn:hover {
+         background-color: #0056b3;
+       }
+       .btn-secondary {
+         background-color: #6c757d;
+       }
+       .btn-secondary:hover {
+         background-color: #5a6268;
+       }
+       .btn-small {
+         padding: 5px 10px;
+         font-size: 0.9rem;
+       }
+       .btn-danger {
+         background-color: #dc3545;
+       }
+       .btn-danger:hover {
+         background-color: #b02a37;
+       }
+       .post-grid {
+         display: grid;
+         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+         gap: 20px;
+       }
+       .post-card {
+         background-color: #2c2c2c;
+         padding: 20px;
+         border-radius: 10px;
+         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+       }
+       .post-card h3 {
+         font-size: 1.5rem;
+         margin-bottom: 10px;
+       }
+       .post-actions {
+         display: flex;
+         gap: 10px;
+       }
+       @media (max-width: 600px) {
+         h1 {
+           font-size: 1.8rem;
+         }
+         .post-form {
+           padding: 15px;
+         }
+         .post-grid {
+           grid-template-columns: 1fr;
+         }
+         .post-card {
+           padding: 15px;
+         }
+       }
+       ```
+     - `admin.component.ts`:
        ```typescript
        import { Component, OnInit } from '@angular/core';
        import { CommonModule } from '@angular/common';
@@ -238,7 +574,8 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
          selector: 'app-admin',
          standalone: true,
          imports: [CommonModule, ReactiveFormsModule],
-         templateUrl: './admin.component.html'
+         templateUrl: './admin.component.html',
+         styleUrls: ['./admin.component.css']
        })
        export class AdminComponent implements OnInit {
          posts: BlogPost[] = [];
@@ -288,8 +625,8 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
          }
        }
        ```
-8. **Update App Component**:
-   - Edit `app.component.html`:
+9. **Update App Component**:
+   - `app.component.html`:
      ```html
      <nav>
        <a routerLink="/">Home</a>
@@ -300,7 +637,15 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
      </nav>
      <router-outlet></router-outlet>
      ```
-   - Edit `app.component.ts`:
+   - `app.component.css`:
+     ```css
+     nav {
+       display: flex;
+       justify-content: center;
+       gap: 20px;
+     }
+     ```
+   - `app.component.ts`:
      ```typescript
      import { Component } from '@angular/core';
      import { RouterOutlet, RouterLink } from '@angular/router';
@@ -309,15 +654,16 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
        selector: 'app-root',
        standalone: true,
        imports: [RouterOutlet, RouterLink],
-       templateUrl: './app.component.html'
+       templateUrl: './app.component.html',
+       styleUrls: ['./app.component.css']
      })
      export class AppComponent {}
      ```
-9. **Test Locally**:
-   ```bash
-   ng serve
-   ```
-   - Verify at `http://localhost:4200` (navigate Home, About, Profile, Blog, Admin; test reactive form in Admin).
+10. **Test Locally**:
+    ```bash
+    ng serve
+    ```
+    - Verify at `http://localhost:4200`. Check styling: fixed nav, dark theme, responsive grid for Blog/Admin, card layouts, form styling, and reactive form functionality in Admin.
 
 ## Step 2: Set Up AWS Backend
 1. **Create DynamoDB Table**:
@@ -456,7 +802,7 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
    ```bash
    ng build --configuration production
    ```
-   - Outputs `dist/blog-app/` (~10–50 files).
+   - Outputs `dist/blog-app/` (~10–50 files, ~10 MB with CSS).
 2. **Create S3 Bucket**:
    - In AWS Console, create `your-blog-bucket`.
    - Enable **Static website hosting** (Index: `index.html`).
@@ -483,7 +829,7 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
    - Default Root Object: `index.html`.
    - Error Responses: Redirect 403/404 to `/index.html` (HTTP 200) for SPA routing.
    - Deploy (~5–10 minutes).
-4. **Test**: Access at `https://<cloudfront-id>.cloudfront.net`.
+4. **Test**: Access at `https://<cloudfront-id>.cloudfront.net`. Verify styling and functionality.
 
 ## Step 4: Add Custom Domain (Optional)
 1. **Register Domain**:
@@ -519,7 +865,7 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
 - **Cost**: ~$0.0012/year for 100 MB in Deep Archive (not free tier).
 
 ## Step 7: Test and Update
-- **Test**: Access `https://blog.yourdomain.com` or CloudFront URL. Verify navigation (Home, About, Profile, Blog, Admin) and CRUD in Admin (reactive forms).s
+- **Test**: Access `https://blog.yourdomain.com` or CloudFront URL. Verify navigation, styling (fixed nav, dark theme, responsive grid, card layouts, form styling), and CRUD in Admin (reactive forms).
 - **Update**:
   - Edit Angular code, rebuild (`ng build`), upload `dist/` to S3 (~$0.00025).
   - Invalidate CloudFront cache (`/*`, ~$0.005 after 1,000 free/month, free tier: 1,000 invalidations).
@@ -545,10 +891,10 @@ This tutorial updates the previous guide to create an **Angular 19** standalone 
 - **Storage**: Store zipped Angular projects and school files in `school-files-archive-<yourname>` (S3-IA → Glacier → Deep Archive, ~$31/year for 1 TB, not free tier).
 - **Access**: Restore Glacier/Deep Archive files (~$0.01–$0.02/GB, free tier: 100 GB egress) for edits.
 - **Sharing**: Use presigned URLs (~$0.09/GB) or CloudFront (~$0.085/GB, free tier) for videos/projects.
-- **Lifecycle**: No transitions from Glacier to Standard (as asked); restore manually for access.
+- **Lifecycle**: No transitions from Glacier to Standard; restore manually for access.
 
 ## Lessons Learned
-- **Angular 19**: Standalone components and reactive forms streamline development, avoiding `NgModel`.
+- **Angular 19**: Standalone components and `ReactiveFormsModule` (not `provideReactiveForms`) streamline reactive forms.
 - **AWS**: S3+CloudFront is cost-effective for static hosting; serverless backend minimizes costs.
 - **PUT Charges**: Zipping Angular source saves ~$0.01 per 1,000 files.
 - **Glacier/Deep Archive**: Not in free tier, use for archival (~$1–$4/TB/month), restore for hosting.
