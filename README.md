@@ -1,146 +1,148 @@
-# Tutorial: Building and Hosting a Styled Standalone Angular 19 Blog Application on AWS with Reactive Forms
+# Tutorial: Building an Angular 19 Blog and Hosting with CloudFront, S3, API Gateway, Lambda, and DynamoDB
 
-This tutorial creates a styled **Angular 19** standalone application with **Home**, **About**, **Profile**, and **Blog pages**, supporting dynamic blog post management (create, edit, delete) using **reactive forms** (no `NgModel`). It aligns with your `main.ts`, `app.config.ts`, and `app.routes.ts` structure, correctly using `ReactiveFormsModule` (no `provideReactiveForms`). The app is hosted on **AWS S3 + CloudFront** with a serverless backend (**API Gateway + Lambda + DynamoDB**) and optional **Route 53** for a custom domain. It minimizes **PUT charges** by zipping Angular source for archival storage in S3 Glacier/Deep Archive (not in the AWS free tier) and integrates with your school file storage (documents, videos, Angular projects). The styling uses a dark theme with responsive design.
+This tutorial guides you through creating an **Angular 19 standalone blog application**, hosting its static files (`dist/blog-app/`) on **Amazon S3** with **CloudFront** as a CDN, and integrating dynamic CRUD operations via **AWS API Gateway**, **Lambda**, and **DynamoDB**. It addresses the issue of not seeing the **Create Control Setting** option for **Origin Access Control (OAC)** in CloudFront, ensuring secure S3 access. The setup supports your requirements: `main.ts`, `app.config.ts`, `app.routes.ts`, styled components with dark theme, reactive forms, S3-hosted assets, and school file storage (zipped Angular projects in S3-IA → Glacier → Deep Archive, not in free tier). It resolves prior issues (CORS for `DELETE /posts/{postId}`, authentication for `GET /posts/{postId}`) and minimizes costs (~$1.35/year for blog, free tier; ~$31/year for 1 TB school files).
 
 ## Prerequisites
-- **Node.js** (v18+): Install from [nodejs.org](https://nodejs.org).
-- **Angular CLI**: `npm install -g @angular/cli@19`.
-- **AWS Account**: Sign up at [aws.amazon.com](https://aws.amazon.com) (free tier: 5 GB S3 Standard, 1 TB CloudFront egress, 25 GB DynamoDB, 1M Lambda requests).
-- **AWS CLI** (optional): Install via [AWS CLI docs](https://aws.amazon.com/cli/).
-- **Domain** (optional): For custom domain (e.g., `blog.yourdomain.com`).
-- **Tools**: Git, code editor (e.g., VS Code), unzip tool (e.g., 7-Zip).
+- **AWS Account**: Sign up at [aws.amazon.com](https://aws.amazon.com) (free tier: 1 TB CloudFront egress, 1,000 invalidations, 5 GB S3 Standard, 2,000 PUT requests, 1M API Gateway calls, 25 GB DynamoDB, 1M Lambda requests).
+- **IAM Permissions**: Ensure your IAM user/role has:
+  ```json
+  {
+      "Effect": "Allow",
+      "Action": [
+          "s3:*",
+          "cloudfront:*",
+          "dynamodb:*",
+          "lambda:*",
+          "execute-api:*",
+          "iam:PassRole",
+          "iam:GetRole",
+          "iam:CreateRole",
+          "iam:PutRolePolicy"
+      ],
+      "Resource": "*"
+  }
+  ```
+- **Node.js and Angular CLI**: Node.js 20.x, Angular CLI 19.x (`npm install -g @angular/cli@19`).
+- **AWS CLI**: Installed and configured (`aws configure`).
+- **Tools**: Code editor (e.g., VS Code), 7-Zip for zipping.
 
-## Step 1: Create the Angular Application
-1. **Initialize Project** (if not already done):
+## Step 1: Create Angular 19 Standalone Blog Application
+1. **Create Project**:
    ```bash
-   ng new blog-app --standalone --routing --style=css
+   ng new blog-app --standalone --style=css --routing
+   cd blog-app
    ```
-   - Confirms standalone setup with routing and CSS.
-2. **Generate Components and Service**:
+   - Select **CSS**, enable **routing**, no SSR.
+2. **Install Dependencies**:
    ```bash
-   ng generate component home --standalone
-   ng generate component about --standalone
-   ng generate component profile --standalone
-   ng generate component blog --standalone
-   ng generate component admin --standalone
+   npm install bootstrap @ng-bootstrap/ng-bootstrap rxjs
+   ```
+   - Adds Bootstrap for styling and reactive forms support.
+3. **Set Up Project Structure**:
+   ```bash
+   ng generate component home
+   ng generate component blog
+   ng generate component post
+   ng generate component admin
    ng generate service blog
    ```
-   - `home`: Welcome page.
-   - `about`: Blog information.
-   - `profile`: Personal info (e.g., portfolio).
-   - `blog`: Lists blog posts.
-   - `admin`: Form for creating/editing/deleting posts.
-   - `blog.service`: Handles API calls.
-3. **Set Up Global Styles**:
-   - Edit `src/styles.css`:
+4. **Configure Bootstrap**:
+   - In `src/styles.css`:
      ```css
-     * {
-       margin: 0;
-       padding: 0;
-       box-sizing: border-box;
-     }
-
+     @import "~bootstrap/dist/css/bootstrap.min.css";
      body {
-       font-family: 'Arial', sans-serif;
-       background-color: #1a1a1a;
-       color: #e0e0e0;
-       line-height: 1.6;
+       background-color: #1a1a1a; /* Dark theme */
+       color: #ffffff;
      }
-
-     a {
-       color: #007bff;
-       text-decoration: none;
-     }
-
-     a:hover {
-       color: #0056b3;
-     }
-
-     .container {
-       max-width: 1200px;
-       margin: 0 auto;
-       padding: 20px;
-     }
-
-     nav {
-       background-color: #2c2c2c;
-       padding: 10px 20px;
+     .navbar {
        position: fixed;
        top: 0;
        width: 100%;
        z-index: 1000;
-       box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
      }
-
-     nav a {
-       margin-right: 20px;
-       font-weight: bold;
+     .card {
+       background-color: #2c2c2c;
+       border: 1px solid #444;
      }
-
-     nav a:hover {
-       color: #ffffff;
-     }
-
-     @media (max-width: 600px) {
-       nav {
-         padding: 10px;
-       }
-       nav a {
-         margin-right: 10px;
-         font-size: 14px;
-       }
-       .container {
-         padding: 10px;
-       }
+     .container {
+       margin-top: 70px; /* Offset for fixed navbar */
      }
      ```
-4. **Update Routing**:
-   - Edit `app.routes.ts`:
+   - In `angular.json`, add Bootstrap JS:
+     ```json
+     "scripts": [
+       "node_modules/bootstrap/dist/js/bootstrap.bundle.min.js"
+     ]
+     ```
+5. **Configure App**:
+   - **src/main.ts**:
+     ```typescript
+     import { bootstrapApplication } from '@angular/platform-browser';
+     import { provideRouter } from '@angular/router';
+     import { provideHttpClient } from '@angular/common/http';
+     import { provideAnimations } from '@angular/platform-browser/animations';
+     import { AppComponent } from './app/app.component';
+     import { appRoutes } from './app/app.routes';
+     import { importProvidersFrom } from '@angular/core';
+     import { ReactiveFormsModule } from '@angular/forms';
+     import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
+
+     bootstrapApplication(AppComponent, {
+       providers: [
+         provideRouter(appRoutes),
+         provideHttpClient(),
+         provideAnimations(),
+         importProvidersFrom(ReactiveFormsModule, NgbModule)
+       ]
+     }).catch(err => console.error(err));
+     ```
+   - **src/app/app.component.ts**:
+     ```typescript
+     import { Component } from '@angular/core';
+     import { RouterOutlet } from '@angular/router';
+     import { CommonModule } from '@angular/common';
+     import { NgbNavModule } from '@ng-bootstrap/ng-bootstrap';
+
+     @Component({
+       selector: 'app-root',
+       standalone: true,
+       imports: [RouterOutlet, CommonModule, NgbNavModule],
+       template: `
+         <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+           <div class="container">
+             <a class="navbar-brand" href="/">Blog</a>
+             <ul class="navbar-nav">
+               <li class="nav-item"><a class="nav-link" routerLink="/">Home</a></li>
+               <li class="nav-item"><a class="nav-link" routerLink="/blog">Blog</a></li>
+               <li class="nav-item"><a class="nav-link" routerLink="/admin">Admin</a></li>
+             </ul>
+           </div>
+         </nav>
+         <div class="container">
+           <router-outlet></router-outlet>
+         </div>
+       `
+     })
+     export class AppComponent {}
+     ```
+   - **src/app/app.routes.ts**:
      ```typescript
      import { Routes } from '@angular/router';
      import { HomeComponent } from './home/home.component';
-     import { AboutComponent } from './about/about.component';
-     import { ProfileComponent } from './profile/profile.component';
      import { BlogComponent } from './blog/blog.component';
+     import { PostComponent } from './post/post.component';
      import { AdminComponent } from './admin/admin.component';
 
-     export const routes: Routes = [
+     export const appRoutes: Routes = [
        { path: '', component: HomeComponent },
-       { path: 'about', component: AboutComponent },
-       { path: 'profile', component: ProfileComponent },
        { path: 'blog', component: BlogComponent },
+       { path: 'post/:id', component: PostComponent },
        { path: 'admin', component: AdminComponent },
        { path: '**', redirectTo: '' }
      ];
      ```
-5. **Update App Config**:
-   - Edit `app.config.ts`:
-     ```typescript
-     import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
-     import { provideRouter } from '@angular/router';
-     import { provideHttpClient } from '@angular/common/http';
-     import { routes } from './app.routes';
-
-     export const appConfig: ApplicationConfig = {
-       providers: [
-         provideZoneChangeDetection({ eventCoalescing: true }),
-         provideRouter(routes),
-         provideHttpClient()
-       ]
-     };
-     ```
-     - Removes `provideReactiveForms` (does not exist); `ReactiveFormsModule` is imported in `AdminComponent`.
-6. **Update Main**:
-   - Ensure `main.ts` matches:
-     ```typescript
-     import { bootstrapApplication } from '@angular/platform-browser';
-     import { AppComponent } from './app/app.component';
-     import { appConfig } from './app/app.config';
-
-     bootstrapApplication(AppComponent, appConfig);
-     ```
-7. **Create Blog Service**:
-   - Edit `blog.service.ts`:
+6. **Create Blog Service**:
+   - **src/app/blog.service.ts**:
      ```typescript
      import { Injectable } from '@angular/core';
      import { HttpClient } from '@angular/common/http';
@@ -156,7 +158,7 @@ This tutorial creates a styled **Angular 19** standalone application with **Home
 
      @Injectable({ providedIn: 'root' })
      export class BlogService {
-       private apiUrl = 'https://<your-api-id>.execute-api.<region>.amazonaws.com/prod/posts';
+       private apiUrl = 'https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod/posts';
 
        constructor(private http: HttpClient) {}
 
@@ -181,720 +183,600 @@ This tutorial creates a styled **Angular 19** standalone application with **Home
        }
      }
      ```
-   - Replace `<your-api-id>` and `<region>` with your API Gateway endpoint (set later).
-8. **Implement Components**:
-   - **Home**:
-     - `home.component.html`:
-       ```html
-       <div class="container">
-         <h1>Welcome to My Blog</h1>
-         <p>Explore my posts, about, and profile!</p>
-         <a routerLink="/blog" class="btn">View Blog</a>
-       </div>
-       ```
-     - `home.component.css`:
-       ```css
-       .container {
-         text-align: center;
-         padding-top: 80px;
-       }
-       h1 {
-         font-size: 2.5rem;
-         margin-bottom: 20px;
-       }
-       p {
-         font-size: 1.2rem;
-         margin-bottom: 30px;
-       }
-       .btn {
-         background-color: #007bff;
-         color: #ffffff;
-         padding: 10px 20px;
-         border-radius: 5px;
-         font-weight: bold;
-       }
-       .btn:hover {
-         background-color: #0056b3;
-       }
-       @media (max-width: 600px) {
-         h1 {
-           font-size: 2rem;
-         }
-         p {
-           font-size: 1rem;
-         }
-       }
-       ```
-     - `home.component.ts`:
-       ```typescript
-       import { Component } from '@angular/core';
-       import { RouterLink } from '@angular/router';
+7. **Create Components**:
+   - **HomeComponent** (`src/app/home/home.component.ts`):
+     ```typescript
+     import { Component } from '@angular/core';
 
-       @Component({
-         selector: 'app-home',
-         standalone: true,
-         imports: [RouterLink],
-         templateUrl: './home.component.html',
-         styleUrls: ['./home.component.css']
-       })
-       export class HomeComponent {}
-       ```
-   - **About**:
-     - `about.component.html`:
-       ```html
-       <div class="container">
-         <h1>About</h1>
-         <p>This blog shares my academic and coding journey as an ICT Master's student.</p>
-       </div>
-       ```
-     - `about.component.css`:
-       ```css
-       .container {
-         padding-top: 80px;
-       }
-       h1 {
-         font-size: 2rem;
-         margin-bottom: 20px;
-       }
-       p {
-         font-size: 1.1rem;
-         max-width: 800px;
-         margin: 0 auto;
-       }
-       @media (max-width: 600px) {
-         h1 {
-           font-size: 1.8rem;
-         }
-         p {
-           font-size: 1rem;
-         }
-       }
-       ```
-     - `about.component.ts`:
-       ```typescript
-       import { Component } from '@angular/core';
-
-       @Component({
-         selector: 'app-about',
-         standalone: true,
-         templateUrl: './about.component.html',
-         styleUrls: ['./about.component.css']
-       })
-       export class AboutComponent {}
-       ```
-   - **Profile**:
-     - `profile.component.html`:
-       ```html
-       <div class="container">
-         <h1>Profile</h1>
-         <div class="profile-card">
-           <p><strong>Name:</strong> [Your Name]</p>
-           <p><strong>Background:</strong> ICT Master's, Angular Developer</p>
-           <p><strong>Projects:</strong> <a routerLink="/blog">See my blog posts</a></p>
+     @Component({
+       selector: 'app-home',
+       standalone: true,
+       template: `
+         <div class="container">
+           <h1>Welcome to the Blog</h1>
+           <p>Explore our posts or manage content in the admin panel.</p>
          </div>
-       </div>
-       ```
-     - `profile.component.css`:
-       ```css
-       .container {
-         padding-top: 80px;
-       }
-       h1 {
-         font-size: 2rem;
-         margin-bottom: 20px;
-         text-align: center;
-       }
-       .profile-card {
-         background-color: #2c2c2c;
-         padding: 20px;
-         border-radius: 10px;
-         max-width: 600px;
-         margin: 0 auto;
-         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-       }
-       p {
-         font-size: 1.1rem;
-         margin-bottom: 10px;
-       }
-       @media (max-width: 600px) {
-         h1 {
-           font-size: 1.8rem;
-         }
-         .profile-card {
-           padding: 15px;
-         }
-         p {
-           font-size: 1rem;
-         }
-       }
-       ```
-     - `profile.component.ts`:
-       ```typescript
-       import { Component } from '@angular/core';
-       import { RouterLink } from '@angular/router';
+       `
+     })
+     export class HomeComponent {}
+     ```
+   - **BlogComponent** (`src/app/blog/blog.component.ts`):
+     ```typescript
+     import { Component, OnInit } from '@angular/core';
+     import { CommonModule } from '@angular/common';
+     import { RouterLink } from '@angular/router';
+     import { BlogService, BlogPost } from '../blog.service';
 
-       @Component({
-         selector: 'app-profile',
-         standalone: true,
-         imports: [RouterLink],
-         templateUrl: './profile.component.html',
-         styleUrls: ['./profile.component.css']
-       })
-       export class ProfileComponent {}
-       ```
-   - **Blog**:
-     - `blog.component.html`:
-       ```html
-       <div class="container">
-         <h1>Blog Posts</h1>
-         <div class="post-grid">
-           <div class="post-card" *ngFor="let post of posts">
-             <h3>{{ post.title }}</h3>
-             <p>{{ post.content }}</p>
-             <img *ngIf="post.imageUrl" [src]="post.imageUrl" alt="Post Image">
-           </div>
-         </div>
-         <a routerLink="/admin" class="btn">Manage Posts</a>
-       </div>
-       ```
-     - `blog.component.css`:
-       ```css
-       .container {
-         padding-top: 80px;
-       }
-       h1 {
-         font-size: 2rem;
-         margin-bottom: 20px;
-         text-align: center;
-       }
-       .post-grid {
-         display: grid;
-         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-         gap: 20px;
-       }
-       .post-card {
-         background-color: #2c2c2c;
-         padding: 20px;
-         border-radius: 10px;
-         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-       }
-       .post-card h3 {
-         font-size: 1.5rem;
-         margin-bottom: 10px;
-       }
-       .post-card p {
-         font-size: 1rem;
-         margin-bottom: 10px;
-       }
-       .post-card img {
-         max-width: 100%;
-         border-radius: 5px;
-       }
-       .btn {
-         display: inline-block;
-         background-color: #007bff;
-         color: #ffffff;
-         padding: 10px 20px;
-         border-radius: 5px;
-         font-weight: bold;
-         text-align: center;
-         margin-top: 20px;
-       }
-       .btn:hover {
-         background-color: #0056b3;
-       }
-       @media (max-width: 600px) {
-         h1 {
-           font-size: 1.8rem;
-         }
-         .post-grid {
-           grid-template-columns: 1fr;
-         }
-         .post-card {
-           padding: 15px;
-         }
-       }
-       ```
-     - `blog.component.ts`:
-       ```typescript
-       import { Component, OnInit } from '@angular/core';
-       import { CommonModule } from '@angular/common';
-       import { RouterLink } from '@angular/router';
-       import { BlogService, BlogPost } from '../blog.service';
-
-       @Component({
-         selector: 'app-blog',
-         standalone: true,
-         imports: [CommonModule, RouterLink],
-         templateUrl: './blog.component.html',
-         styleUrls: ['./blog.component.css']
-       })
-       export class BlogComponent implements OnInit {
-         posts: BlogPost[] = [];
-
-         constructor(private blogService: BlogService) {}
-
-         ngOnInit() {
-           this.blogService.getPosts().subscribe(posts => this.posts = posts);
-         }
-       }
-       ```
-   - **Admin**:
-     - `admin.component.html`:
-       ```html
-       <div class="container">
-         <h1>Manage Posts</h1>
-         <form [formGroup]="postForm" (ngSubmit)="savePost()" class="post-form">
-           <input formControlName="postId" placeholder="Post ID" readonly>
-           <input formControlName="title" placeholder="Title" required>
-           <textarea formControlName="content" placeholder="Content" required></textarea>
-           <input formControlName="imageUrl" placeholder="Image URL">
-           <div class="form-buttons">
-             <button type="submit" [disabled]="postForm.invalid" class="btn">Save</button>
-             <button type="button" (click)="resetForm()" class="btn btn-secondary">Clear</button>
-           </div>
-         </form>
-         <div class="post-grid">
-           <div class="post-card" *ngFor="let post of posts">
-             <h3>{{ post.title }}</h3>
-             <div class="post-actions">
-               <button (click)="editPost(post)" class="btn btn-small">Edit</button>
-               <button (click)="deletePost(post.postId)" class="btn btn-small btn-danger">Delete</button>
+     @Component({
+       selector: 'app-blog',
+       standalone: true,
+       imports: [CommonModule, RouterLink],
+       template: `
+         <div class="container">
+           <h2>Blog Posts</h2>
+           <div class="row">
+             <div class="col-md-4" *ngFor="let post of posts">
+               <div class="card mb-4">
+                 <img *ngIf="post.imageUrl" [src]="post.imageUrl" class="card-img-top" alt="{{post.title}}">
+                 <div class="card-body">
+                   <h5 class="card-title">{{post.title}}</h5>
+                   <p class="card-text">{{post.content | slice:0:100}}...</p>
+                   <a [routerLink]="['/post', post.postId]" class="btn btn-primary">Read More</a>
+                 </div>
+               </div>
              </div>
            </div>
          </div>
-       </div>
-       ```
-     - `admin.component.css`:
-       ```css
-       .container {
-         padding-top: 80px;
-       }
-       h1 {
-         font-size: 2rem;
-         margin-bottom: 20px;
-         text-align: center;
-       }
-       .post-form {
-         background-color: #2c2c2c;
-         padding: 20px;
-         border-radius: 10px;
-         max-width: 600px;
-         margin: 0 auto 30px;
-         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-       }
-       .post-form input,
-       .post-form textarea {
-         width: 100%;
-         padding: 10px;
-         margin-bottom: 15px;
-         border: 1px solid #444;
-         border-radius: 5px;
-         background-color: #333;
-         color: #e0e0e0;
-         font-size: 1rem;
-       }
-       .post-form textarea {
-         min-height: 100px;
-       }
-       .form-buttons {
-         display: flex;
-         gap: 10px;
-       }
-       .btn {
-         background-color: #007bff;
-         color: #ffffff;
-         padding: 10px 20px;
-         border: none;
-         border-radius: 5px;
-         cursor: pointer;
-         font-weight: bold;
-       }
-       .btn:hover {
-         background-color: #0056b3;
-       }
-       .btn-secondary {
-         background-color: #6c757d;
-       }
-       .btn-secondary:hover {
-         background-color: #5a6268;
-       }
-       .btn-small {
-         padding: 5px 10px;
-         font-size: 0.9rem;
-       }
-       .btn-danger {
-         background-color: #dc3545;
-       }
-       .btn-danger:hover {
-         background-color: #b02a37;
-       }
-       .post-grid {
-         display: grid;
-         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-         gap: 20px;
-       }
-       .post-card {
-         background-color: #2c2c2c;
-         padding: 20px;
-         border-radius: 10px;
-         box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-       }
-       .post-card h3 {
-         font-size: 1.5rem;
-         margin-bottom: 10px;
-       }
-       .post-actions {
-         display: flex;
-         gap: 10px;
-       }
-       @media (max-width: 600px) {
-         h1 {
-           font-size: 1.8rem;
-         }
-         .post-form {
-           padding: 15px;
-         }
-         .post-grid {
-           grid-template-columns: 1fr;
-         }
-         .post-card {
-           padding: 15px;
-         }
-       }
-       ```
-     - `admin.component.ts`:
-       ```typescript
-       import { Component, OnInit } from '@angular/core';
-       import { CommonModule } from '@angular/common';
-       import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
-       import { BlogService, BlogPost } from '../blog.service';
+       `
+     })
+     export class BlogComponent implements OnInit {
+       posts: BlogPost[] = [];
+       constructor(private blogService: BlogService) {}
 
-       @Component({
-         selector: 'app-admin',
-         standalone: true,
-         imports: [CommonModule, ReactiveFormsModule],
-         templateUrl: './admin.component.html',
-         styleUrls: ['./admin.component.css']
-       })
-       export class AdminComponent implements OnInit {
-         posts: BlogPost[] = [];
-         postForm: FormGroup;
-
-         constructor(private blogService: BlogService, private fb: FormBuilder) {
-           this.postForm = this.fb.group({
-             postId: [''],
-             title: ['', Validators.required],
-             content: ['', Validators.required],
-             imageUrl: ['']
-           });
-         }
-
-         ngOnInit() {
-           this.blogService.getPosts().subscribe(posts => this.posts = posts);
-         }
-
-         savePost() {
-           const post: BlogPost = this.postForm.value;
-           if (post.postId) {
-             this.blogService.updatePost(post.postId, post).subscribe(() => this.resetForm());
-           } else {
-             post.postId = Date.now().toString();
-             this.blogService.createPost(post).subscribe(() => this.resetForm());
-           }
-         }
-
-         editPost(post: BlogPost) {
-           this.postForm.setValue({
-             postId: post.postId,
-             title: post.title,
-             content: post.content,
-             imageUrl: post.imageUrl || ''
-           });
-         }
-
-         deletePost(postId: string) {
-           this.blogService.deletePost(postId).subscribe(() => {
-             this.posts = this.posts.filter(p => p.postId !== postId);
-           });
-         }
-
-         resetForm() {
-           this.postForm.reset({ postId: '', title: '', content: '', imageUrl: '' });
-           this.blogService.getPosts().subscribe(posts => this.posts = posts);
-         }
+       ngOnInit() {
+         this.blogService.getPosts().subscribe(posts => this.posts = posts);
        }
-       ```
-9. **Update App Component**:
-   - `app.component.html`:
-     ```html
-     <nav>
-       <a routerLink="/">Home</a>
-       <a routerLink="/about">About</a>
-       <a routerLink="/profile">Profile</a>
-       <a routerLink="/blog">Blog</a>
-       <a routerLink="/admin">Admin</a>
-     </nav>
-     <router-outlet></router-outlet>
-     ```
-   - `app.component.css`:
-     ```css
-     nav {
-       display: flex;
-       justify-content: center;
-       gap: 20px;
      }
      ```
-   - `app.component.ts`:
+   - **PostComponent** (`src/app/post/post.component.ts`):
      ```typescript
-     import { Component } from '@angular/core';
-     import { RouterOutlet, RouterLink } from '@angular/router';
+     import { Component, OnInit } from '@angular/core';
+     import { CommonModule } from '@angular/common';
+     import { ActivatedRoute } from '@angular/router';
+     import { BlogService, BlogPost } from '../blog.service';
 
      @Component({
-       selector: 'app-root',
+       selector: 'app-post',
        standalone: true,
-       imports: [RouterOutlet, RouterLink],
-       templateUrl: './app.component.html',
-       styleUrls: ['./app.component.css']
+       imports: [CommonModule],
+       template: `
+         <div class="container" *ngIf="post">
+           <h2>{{post.title}}</h2>
+           <img *ngIf="post.imageUrl" [src]="post.imageUrl" class="img-fluid mb-3" alt="{{post.title}}">
+           <p>{{post.content}}</p>
+           <p><small>Posted on: {{post.createdAt | date:'medium'}}</small></p>
+         </div>
+       `
      })
-     export class AppComponent {}
+     export class PostComponent implements OnInit {
+       post: BlogPost | undefined;
+       constructor(private route: ActivatedRoute, private blogService: BlogService) {}
+
+       ngOnInit() {
+         const id = this.route.snapshot.paramMap.get('id')!;
+         this.blogService.getPost(id).subscribe(post => this.post = post);
+       }
+     }
      ```
-10. **Test Locally**:
-    ```bash
-    ng serve
-    ```
-    - Verify at `http://localhost:4200`. Check styling: fixed nav, dark theme, responsive grid for Blog/Admin, card layouts, form styling, and reactive form functionality in Admin.
+   - **AdminComponent** (`src/app/admin/admin.component.ts`):
+     ```typescript
+     import { Component, OnInit } from '@angular/core';
+     import { CommonModule } from '@angular/common';
+     import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
+     import { BlogService, BlogPost } from '../blog.service';
+
+     @Component({
+       selector: 'app-admin',
+       standalone: true,
+       imports: [CommonModule, ReactiveFormsModule],
+       template: `
+         <div class="container">
+           <h2>Manage Posts</h2>
+           <form [formGroup]="postForm" (ngSubmit)="onSubmit()">
+             <div class="mb-3">
+               <label class="form-label">Title</label>
+               <input type="text" class="form-control" formControlName="title">
+             </div>
+             <div class="mb-3">
+               <label class="form-label">Content</label>
+               <textarea class="form-control" formControlName="content"></textarea>
+             </div>
+             <div class="mb-3">
+               <label class="form-label">Image URL</label>
+               <input type="text" class="form-control" formControlName="imageUrl">
+             </div>
+             <button type="submit" class="btn btn-primary" [disabled]="postForm.invalid">Create Post</button>
+           </form>
+           <h3 class="mt-5">Existing Posts</h3>
+           <ul class="list-group">
+             <li class="list-group-item d-flex justify-content-between" *ngFor="let post of posts">
+               {{post.title}}
+               <div>
+                 <button class="btn btn-danger btn-sm" (click)="deletePost(post.postId)">Delete</button>
+               </div>
+             </li>
+           </ul>
+         </div>
+       `
+     })
+     export class AdminComponent implements OnInit {
+       postForm: FormGroup;
+       posts: BlogPost[] = [];
+
+       constructor(private fb: FormBuilder, private blogService: BlogService) {
+         this.postForm = this.fb.group({
+           title: ['', Validators.required],
+           content: ['', Validators.required],
+           imageUrl: [''],
+           createdAt: [new Date().toISOString()]
+         });
+       }
+
+       ngOnInit() {
+         this.blogService.getPosts().subscribe(posts => this.posts = posts);
+       }
+
+       onSubmit() {
+         const post: BlogPost = {
+           postId: Date.now().toString(),
+           ...this.postForm.value
+         };
+         this.blogService.createPost(post).subscribe(() => {
+           this.posts.push(post);
+           this.postForm.reset({ createdAt: new Date().toISOString() });
+         });
+       }
+
+       deletePost(postId: string) {
+         this.blogService.deletePost(postId).subscribe(() => {
+           this.posts = this.posts.filter(p => p.postId !== postId);
+         });
+       }
+     }
+     ```
+8. **Test Locally**:
+   - Run `ng serve`.
+   - Access `http://localhost:4200`.
+   - Verify navigation (`/`, `/blog`, `/post/:id`, `/admin`), styling (dark theme, fixed nav, responsive grid), and form functionality.
 
 ## Step 2: Set Up AWS Backend
 1. **Create DynamoDB Table**:
-   - In AWS Console, go to DynamoDB → Create Table.
-   - Name: `BlogPosts`.
-   - Partition Key: `postId` (String).
-   - Attributes: `title` (String), `content` (String), `imageUrl` (String), `createdAt` (String).
-   - Pricing: On-demand (~$1.25/TB/month, free tier: 25 GB).
+   - In **AWS Console** → **DynamoDB** → **Tables** → **Create table**.
+   - **Table name**: `BlogPosts`.
+   - **Partition key**: `postId` (String).
+   - **Billing mode**: Provisioned (1 RCU/WCU, free tier: 25 GB).
 2. **Create Lambda Functions**:
-   - Go to Lambda → Create Function (Python 3.9).
-   - **Create Post**:
-     ```python
-     import json
-     import boto3
-     from datetime import datetime
-
-     dynamodb = boto3.resource("dynamodb")
-     table = dynamodb.Table("BlogPosts")
-
-     def lambda_handler(event, context):
-         try:
-             body = json.loads(event["body"])
-             post_id = body["postId"]
-             title = body["title"]
-             content = body["content"]
-             image_url = body.get("imageUrl", "")
-             
-             table.put_item(
-                 Item={
-                     "postId": post_id,
-                     "title": title,
-                     "content": content,
-                     "imageUrl": image_url,
-                     "createdAt": datetime.utcnow().isoformat()
-                 }
-             )
-             return {
-                 "statusCode": 200,
-                 "body": json.dumps({"message": "Post created", "postId": post_id})
-             }
-         except Exception as e:
-             return {
-                 "statusCode": 500,
-                 "body": json.dumps({"error": str(e)})
-             }
-     ```
-   - **Read Posts**:
-     ```python
-     import json
-     import boto3
-
-     dynamodb = boto3.resource("dynamodb")
-     table = dynamodb.Table("BlogPosts")
-
-     def lambda_handler(event, context):
-         try:
-             response = table.scan()
-             return {
-                 "statusCode": 200,
-                 "body": json.dumps(response["Items"])
-             }
-         except Exception as e:
-             return {
-                 "statusCode": 500,
-                 "body": json.dumps({"error": str(e)})
-             }
-     ```
-   - **Update Post**:
-     ```python
-     import json
-     import boto3
-
-     dynamodb = boto3.resource("dynamodb")
-     table = dynamodb.Table("BlogPosts")
-
-     def lambda_handler(event, context):
-         try:
-             body = json.loads(event["body"])
-             post_id = event["pathParameters"]["postId"]
-             table.update_item(
-                 Key={"postId": post_id},
-                 UpdateExpression="SET title = :t, content = :c, imageUrl = :i",
-                 ExpressionAttributeValues={
-                     ":t": body["title"],
-                     ":c": body["content"],
-                     ":i": body.get("imageUrl", "")
-                 }
-             )
-             return {
-                 "statusCode": 200,
-                 "body": json.dumps({"message": "Post updated"})
-             }
-         except Exception as e:
-             return {
-                 "statusCode": 500,
-                 "body": json.dumps({"error": str(e)})
-             }
-     ```
-   - **Delete Post**:
-     ```python
-     import json
-     import boto3
-
-     dynamodb = boto3.resource("dynamodb")
-     table = dynamodb.Table("BlogPosts")
-
-     def lambda_handler(event, context):
-         try:
-             post_id = event["pathParameters"]["postId"]
-             table.delete_item(Key={"postId": post_id})
-             return {
-                 "statusCode": 200,
-                 "body": json.dumps({"message": "Post deleted"})
-             }
-         except Exception as e:
-             return {
-                 "statusCode": 500,
-                 "body": json.dumps({"error": str(e)})
-             }
-     ```
-   - **IAM Role**: Attach a role with `dynamodb:PutItem`, `dynamodb:GetItem`, `dynamodb:Scan`, `dynamodb:UpdateItem`, `dynamodb:DeleteItem` permissions.
-3. **Set Up API Gateway**:
-   - Go to API Gateway → Create API → REST API.
-   - Create resources: `/posts`, `/posts/{postId}`.
-   - Add methods:
-     - `POST /posts` → Lambda `create_post`.
-     - `GET /posts` → Lambda `read_posts`.
-     - `PUT /posts/{postId}` → Lambda `update_post`.
-     - `DELETE /posts/{postId}` → Lambda `delete_post`.
-   - Enable CORS for all methods.
-   - Deploy to a stage (e.g., `prod`).
-   - Update `blog.service.ts` with the endpoint (e.g., `https://<api-id>.execute-api.us-east-1.amazonaws.com/prod`).
-
-## Step 3: Host on S3 + CloudFront
-1. **Build Angular App**:
-   ```bash
-   ng build --configuration production
-   ```
-   - Outputs `dist/blog-app/` (~10–50 files, ~10 MB with CSS).
-2. **Create S3 Bucket**:
-   - In AWS Console, create `your-blog-bucket`.
-   - Enable **Static website hosting** (Index: `index.html`).
-   - Upload `dist/blog-app/` to S3 Standard (~$0.00025 PUT charges for 50 files, free tier: 2,000 PUTs).
-   - Set bucket policy for public read or OAC with CloudFront:
+   - In **Lambda** → **Create function** for each: `createPost`, `readPosts`, `getPost`, `deletePost`.
+   - **Runtime**: Python 3.12.
+   - **IAM Role**:
      ```json
      {
          "Version": "2012-10-17",
          "Statement": [
              {
                  "Effect": "Allow",
-                 "Principal": "*",
-                 "Action": "s3:GetObject",
-                 "Resource": "arn:aws:s3:::your-blog-bucket/*"
+                 "Action": ["dynamodb:PutItem", "dynamodb:Scan", "dynamodb:GetItem", "dynamodb:DeleteItem"],
+                 "Resource": "arn:aws:dynamodb:us-west-1:371751795928:table/BlogPosts"
+             },
+             {
+                 "Effect": "Allow",
+                 "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+                 "Resource": "*"
              }
          ]
      }
      ```
-3. **Create CloudFront Distribution**:
-   - Go to CloudFront → Create Distribution.
-   - Origin: `your-blog-bucket`.
-   - Origin Access: Enable **OAC**, update bucket policy via Console.
-   - Viewer Protocol: Redirect HTTP to HTTPS.
-   - Default Root Object: `index.html`.
-   - Error Responses: Redirect 403/404 to `/index.html` (HTTP 200) for SPA routing.
-   - Deploy (~5–10 minutes).
-4. **Test**: Access at `https://<cloudfront-id>.cloudfront.net`. Verify styling and functionality.
+   - **Code**:
+     - `createPost`:
+       ```python
+       import json
+       import boto3
 
-## Step 4: Add Custom Domain (Optional)
+       dynamodb = boto3.resource("dynamodb")
+       table = dynamodb.Table("BlogPosts")
+
+       def lambda_handler(event, context):
+           try:
+               body = json.loads(event.get("body", "{}"))
+               post = {
+                   "postId": body.get("postId"),
+                   "title": body.get("title"),
+                   "content": body.get("content"),
+                   "imageUrl": body.get("imageUrl", ""),
+                   "createdAt": body.get("createdAt")
+               }
+               table.put_item(Item=post)
+               return {
+                   "statusCode": 201,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "POST,GET,OPTIONS"
+                   },
+                   "body": json.dumps({"message": "Post created"})
+               }
+           except Exception as e:
+               return {
+                   "statusCode": 500,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "POST,GET,OPTIONS"
+                   },
+                   "body": json.dumps({"error": str(e)})
+               }
+       ```
+     - `readPosts`:
+       ```python
+       import json
+       import boto3
+
+       dynamodb = boto3.resource("dynamodb")
+       table = dynamodb.Table("BlogPosts")
+
+       def lambda_handler(event, context):
+           try:
+               response = table.scan()
+               posts = response.get("Items", [])
+               return {
+                   "statusCode": 200,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "GET,OPTIONS"
+                   },
+                   "body": json.dumps(posts)
+               }
+           except Exception as e:
+               return {
+                   "statusCode": 500,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "GET,OPTIONS"
+                   },
+                   "body": json.dumps({"error": str(e)})
+               }
+       ```
+     - `getPost`:
+       ```python
+       import json
+       import boto3
+
+       dynamodb = boto3.resource("dynamodb")
+       table = dynamodb.Table("BlogPosts")
+
+       def lambda_handler(event, context):
+           try:
+               post_id = event.get("pathParameters", {}).get("postId")
+               if not post_id:
+                   return {
+                       "statusCode": 400,
+                       "headers": {
+                           "Access-Control-Allow-Origin": "*",
+                           "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                           "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                       },
+                       "body": json.dumps({"error": "postId is required"})
+                   }
+               response = table.get_item(Key={"postId": post_id})
+               post = response.get("Item")
+               if not post:
+                   return {
+                       "statusCode": 404,
+                       "headers": {
+                           "Access-Control-Allow-Origin": "*",
+                           "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                           "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                       },
+                       "body": json.dumps({"error": f"Post with postId {post_id} not found"})
+                   }
+               return {
+                   "statusCode": 200,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                   },
+                   "body": json.dumps(post)
+               }
+           except Exception as e:
+               return {
+                   "statusCode": 500,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                   },
+                   "body": json.dumps({"error": str(e)})
+               }
+       ```
+     - `deletePost`:
+       ```python
+       import json
+       import boto3
+
+       dynamodb = boto3.resource("dynamodb")
+       table = dynamodb.Table("BlogPosts")
+
+       def lambda_handler(event, context):
+           try:
+               post_id = event.get("pathParameters", {}).get("postId")
+               if not post_id:
+                   return {
+                       "statusCode": 400,
+                       "headers": {
+                           "Access-Control-Allow-Origin": "*",
+                           "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                           "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                       },
+                       "body": json.dumps({"error": "postId is required"})
+                   }
+               response = table.delete_item(Key={"postId": post_id}, ReturnValues="ALL_OLD")
+               if "Attributes" not in response:
+                   return {
+                       "statusCode": 404,
+                       "headers": {
+                           "Access-Control-Allow-Origin": "*",
+                           "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                           "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                       },
+                       "body": json.dumps({"error": f"Post with postId {post_id} not found"})
+                   }
+               return {
+                   "statusCode": 200,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                   },
+                   "body": json.dumps({"message": f"Post {post_id} deleted"})
+               }
+           except Exception as e:
+               return {
+                   "statusCode": 500,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                   },
+                   "body": json.dumps({"error": str(e)})
+               }
+       ```
+3. **Configure API Gateway**:
+   - In **API Gateway** → **Create API** → **REST API** → Name: `BlogAPI`.
+   - **Resources**:
+     - Create `/posts`:
+       - **POST**: Integration with `createPost` Lambda (Proxy integration).
+       - **GET**: Integration with `readPosts` Lambda (Proxy integration).
+       - **OPTIONS**: Mock integration, set headers:
+         ```
+         Access-Control-Allow-Origin: *
+         Access-Control-Allow-Headers: Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token
+         Access-Control-Allow-Methods: POST,GET,OPTIONS
+         ```
+     - Create `/posts/{postId}`:
+       - **GET**: Integration with `getPost` Lambda (Proxy integration).
+       - **DELETE**: Integration with `deletePost` Lambda (Proxy integration).
+       - **OPTIONS**: Mock integration, set headers:
+         ```
+         Access-Control-Allow-Origin: *
+         Access-Control-Allow-Headers: Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token
+         Access-Control-Allow-Methods: GET,DELETE,OPTIONS
+         ```
+   - **Method Request** (for all methods):
+     - **Authorization**: `NONE`.
+     - **API Key Required**: `false` (resolves "Missing Authentication Token").
+   - **Enable CORS**:
+     - Select `/posts` → **Actions** → **Enable CORS** → Check `POST`, `GET`, `OPTIONS`.
+     - Select `/posts/{postId}` → **Enable CORS** → Check `GET`, `DELETE`, `OPTIONS`.
+   - **Deploy API**:
+     - **Actions** → **Deploy API** → Stage: `prod`.
+     - Note endpoint: `https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod`.
+
+## Step 3: Build and Upload Angular App to S3
+1. **Build App**:
+   ```bash
+   ng build --configuration production
+   ```
+   - Outputs `dist/blog-app/` (~10–50 files, ~10 MB):
+     ```
+     dist/blog-app/
+     ├── index.html
+     ├── main.js
+     ├── polyfills.js
+     ├── styles.css
+     ├── assets/
+     │   ├── images/
+     │   ├── favicon.ico
+     │   └── ...
+     └── ...
+     ```
+2. **Create S3 Bucket**:
+   - In **S3** → **Create bucket** → Name: `your-blog-bucket` (us-west-1).
+   - **Object Ownership**: **Bucket owner enforced**.
+   - **Block Public Access**: Enable all.
+3. **Upload Files**:
+   - Go to `your-blog-bucket` → **Upload**.
+   - Select **contents** of `dist/blog-app/` (e.g., `index.html`, `main.js`, `assets/`).
+   - Upload (~$0.00025 for 50 files, free tier: 2,000 PUT requests).
+   - Verify:
+     ```
+     s3://your-blog-bucket/
+     ├── index.html
+     ├── main.js
+     ├── polyfills.js
+     ├── styles.css
+     ├── assets/
+     │   ├── images/
+     │   ├── favicon.ico
+     │   └── ...
+     └── ...
+     ```
+   - Use AWS CLI (optional):
+     ```bash
+     aws s3 sync dist/blog-app/ s3://your-blog-bucket/ --delete --region us-west-1
+     ```
+
+## Step 4: Create CloudFront Distribution with OAC
+1. **Create Distribution**:
+   - In **AWS Console** → **CloudFront** → **Create Distribution**.
+   - **Origin Domain**: `your-blog-bucket.s3.amazonaws.com` (REST API endpoint).
+   - **Origin Access**:
+     - Select **Origin access control settings (recommended)**.
+     - If **Create Control Setting** is missing, go to **Security** → **Origin access** → **Create origin access control**.
+     - **Name**: `BlogOAC`.
+     - **Origin Type**: S3.
+     - **Signing Behavior**: Sign requests (recommended).
+     - **Signing Protocol**: SigV4.
+     - Click **Create**.
+   - **S3 Bucket Access**: **Yes, update the bucket policy**.
+   - **Viewer Protocol Policy**: **Redirect HTTP to HTTPS**.
+   - **Allowed HTTP Methods**: **GET, HEAD, OPTIONS**.
+   - **Cache Policy**: **CachingOptimized**.
+   - **Default Root Object**: `index.html`.
+   - Click **Create Distribution** (~5–10 minutes).
+2. **If “Create Control Setting” Missing**:
+   - Navigate to **CloudFront** → **Security** → **Origin access**.
+   - If not visible, use AWS CLI:
+     ```bash
+     aws cloudfront create-origin-access-control \
+       --origin-access-control-config \
+         Name=BlogOAC,Description="OAC for your-blog-bucket",SigningProtocol=sigv4,SigningBehavior=always,OriginAccessControlOriginType=s3 \
+       --region us-east-1
+     ```
+   - Note `OriginAccessControlId`.
+   - Update distribution:
+     - **CloudFront** → Select distribution → **Origins** → Edit `your-blog-bucket.s3.amazonaws.com`.
+     - Select `BlogOAC` under **Origin access control settings**.
+     - **S3 bucket access**: **Yes, update the bucket policy**.
+3. **Verify Bucket Policy**:
+   - In **S3** → `your-blog-bucket` → **Permissions** → **Bucket policy**:
+     ```json
+     {
+         "Version": "2008-10-17",
+         "Statement": [
+             {
+                 "Effect": "Allow",
+                 "Principal": {
+                     "Service": "cloudfront.amazonaws.com"
+                 },
+                 "Action": "s3:GetObject",
+                 "Resource": "arn:aws:s3:::your-blog-bucket/*",
+                 "Condition": {
+                     "StringEquals": {
+                         "AWS:SourceArn": "arn:aws:cloudfront::371751795928:distribution/<cloudfront-id>"
+                     }
+                 }
+             }
+         ]
+     }
+     ```
+4. **Set Error Responses**:
+   - In **CloudFront** → Select distribution → **Error Responses**.
+   - For `403` and `404`:
+     - **Customize Error Response**: Yes.
+     - **Response Page Path**: `/index.html`.
+     - **HTTP Response Code**: `200 OK`.
+5. **Invalidate Cache**:
+   - **Invalidations** → **Create Invalidation** → `/*` (~$0.005, free tier: 1,000 invalidations).
+
+## Step 5: Test the Application
+1. **Access CloudFront**:
+   - Open `https://<cloudfront-id>.cloudfront.net`.
+   - Verify:
+     - App loads (`index.html`).
+     - Routes work (`/`, `/blog`, `/post/1753938533864`, `/admin`).
+     - API calls succeed (`GET /posts`, `GET /posts/{postId}`, `DELETE /posts/{postId}`).
+     - Styling (dark theme, fixed nav, responsive grid) and forms work.
+2. **DevTools**:
+   - Open DevTools (F12) → **Network**.
+   - Confirm static files load from `https://<cloudfront-id>.cloudfront.net`.
+   - API calls return `200` with `Access-Control-Allow-Origin: *`.
+3. **Test S3 Access**:
+   - `curl https://your-blog-bucket.s3.amazonaws.com/index.html` (should fail).
+   - `curl https://<cloudfront-id>.cloudfront.net/index.html` (should work).
+4. **Troubleshooting**:
+   - **404**: Ensure `index.html` is at bucket root.
+   - **Routing Issues**: Verify 403/404 redirects to `/index.html`.
+   - **API Errors**: Check CORS and authentication (`Authorization: NONE`, `API Key Required: false`).
+   - **OAC Missing**:
+     - Navigate to **CloudFront** → **Security** → **Origin access**.
+     - Use CLI if needed (Step 4).
+
+## Step 6: Add Custom Domain (Optional)
 1. **Register Domain**:
-   - In Route 53, register `yourdomain.com` (~$12/year).
-2. **Create Hosted Zone**:
-   - Create a hosted zone for `yourdomain.com`.
-   - Update nameservers if registered elsewhere.
+   - **Route 53** → Register `yourdomain.com` (~$12/year).
+2. **Hosted Zone**:
+   - Create hosted zone for `yourdomain.com`.
 3. **SSL Certificate**:
-   - In AWS Certificate Manager, create a certificate for `blog.yourdomain.com` (free).
-   - Attach to CloudFront.
-4. **Add Record**:
-   - In Route 53 hosted zone, create an A record for `blog.yourdomain.com`, alias to CloudFront distribution.
+   - **ACM** (us-east-1) → Request certificate for `blog.yourdomain.com`.
+   - Validate via DNS (add CNAME to Route 53).
+4. **Update CloudFront**:
+   - **Distributions** → Select distribution → **General** → **Edit**.
+   - **Alternate Domain Name**: `blog.yourdomain.com`.
+   - **SSL Certificate**: Select ACM certificate.
+5. **Route 53 Record**:
+   - **Hosted Zone** → **Create Record** → `blog.yourdomain.com` → **A** → Alias to CloudFront distribution.
+6. **Test**: `https://blog.yourdomain.com`.
 
-## Step 5: Manage Blog Assets
+## Step 7: Manage Blog Assets
 1. **Create Asset Bucket**:
-   - Create `your-blog-assets` (S3 Standard for instant access).
-2. **Upload Assets**:
-   - Upload images/videos via AWS Console (~$0.005 for 1,000 files, free tier: 2,000 PUTs).
-   - Get CloudFront URLs (e.g., `https://<cloudfront-id>.cloudfront.net/assets/post1.jpg`).
+   - Create `your-blog-assets` (S3 Standard).
+   - Upload images/videos (~$0.005 for 1,000 files, free tier: 2,000 PUT requests).
+2. **Add to CloudFront**:
+   - **Origins** → Create origin for `your-blog-assets.s3.amazonaws.com`.
+   - Use OAC (`BlogOAC` or new).
+   - **Behavior**: Route `/assets/*` to `your-blog-assets`.
 3. **Integrate**:
-   - Store URLs in DynamoDB’s `imageUrl` field.
-   - Add to CloudFront as a second origin (`/assets/*`).
+   - Store URLs (e.g., `https://<cloudfront-id>.cloudfront.net/assets/post1.jpg`) in DynamoDB `imageUrl`.
+4. **Invalidate Cache**: `/assets/*` (~$0.005, free tier).
 
-## Step 6: Handle Zipped Angular Source
-- **Archive**: Zip `blog-app` as `blog-app.zip` to minimize PUT charges (~$0.00001 for S3-IA).
-- **Upload**: Store in `school-files-archive-<yourname>` (S3-IA → Glacier → Deep Archive, not in free tier).
+## Step 8: School File Storage
+- **Archive**: Zip `blog-app` as `blog-app.zip` (~$0.00001 for S3-IA).
+- **Upload**: To `school-files-archive-<yourname>` (S3-IA → Glacier → Deep Archive).
 - **Lifecycle Policy**:
-  - In AWS Console, go to S3 → `school-files-archive-<yourname>` → Management → Create Lifecycle Rule.
-  - Transition to Glacier (30 days, ~$4/TB/month), Deep Archive (90 days, ~$1/TB/month).
+  - **S3** → `school-files-archive-<yourname>` → **Management** → **Create Lifecycle Rule**.
+  - Transition: S3-IA (0 days, ~$12.50/TB/month) → Glacier (30 days, ~$4/TB/month) → Deep Archive (90 days, ~$1/TB/month).
 - **Unzip for Edits**:
-  - **Local**: Download (restore from Glacier/Deep Archive, ~$0.01–$0.02/GB, ~$0.09/GB egress, free tier: 100 GB egress), unzip with 7-Zip, edit, rebuild, re-upload `dist/` (~$0.00025 for 50 files).
-  - **Lambda**: Use the unzip Lambda from prior responses (~$0.01 + ~$0.0005 for 50 files).
-- **Cost**: ~$0.0012/year for 100 MB in Deep Archive (not free tier).
+  - **Local**: Restore (~$0.01–$0.02/GB, free tier: 100 GB egress), unzip, edit, rebuild, re-upload (~$0.00025 for 50 files).
+  - **Lambda**: Use unzip Lambda (~$0.01 + ~$0.0005).
+- **Cost**: ~$31/year for 1 TB in Deep Archive (not free tier).
 
-## Step 7: Test and Update
-- **Test**: Access `https://blog.yourdomain.com` or CloudFront URL. Verify navigation, styling (fixed nav, dark theme, responsive grid, card layouts, form styling), and CRUD in Admin (reactive forms).
-- **Update**:
-  - Edit Angular code, rebuild (`ng build`), upload `dist/` to S3 (~$0.00025).
-  - Invalidate CloudFront cache (`/*`, ~$0.005 after 1,000 free/month, free tier: 1,000 invalidations).
+## Step 9: Costs
+- **CloudFront**: ~$1.02/year (1 GB), ~$0.009/year (1,000 requests), ~$0.005/invalidation (free tier: 1 TB, 1,000 invalidations).
+- **S3**: ~$0.00025 (50 files), ~$0.00276/year (10 MB), ~$0.276/year (1 GB assets).
+- **API Gateway**: ~$0.042/year (1,000 requests, free tier: 1M).
+- **DynamoDB**: ~$0.015/year (1 MB, free tier: 25 GB).
+- **Lambda**: ~$0.0002/year (1,000 requests, free tier: 1M).
+- **Zipped Source**: ~$0.0012/year (100 MB, Deep Archive, not free tier).
+- **Route 53**: ~$18/year.
+- **Total**: ~$1.35/year (free tier), ~$19.35 with Route 53, ~$31/year for 1 TB school files.
 
-## Costs
-- **Frontend (S3+CloudFront)**:
-  - PUT: 50 files × $0.005/1,000 = ~$0.00025 (free tier: 2,000 PUTs).
-  - Storage: 10 MB × $0.023/GB × 12 = ~$0.00276 (free tier: 5 GB).
-  - CloudFront: 1 GB × $0.085 × 12 = ~$1.02 + 1,000 × $0.0075/10,000 × 12 = ~$0.009 (free tier: 1 TB).
-- **Assets**: 1 GB × $0.023 × 12 = ~$0.276; 1,000 files × $0.005/1,000 = ~$0.005 (free tier).
-- **Backend**:
-  - DynamoDB: 1 MB × $1.25/GB × 12 = ~$0.015 (free tier: 25 GB).
-  - Lambda: 1,000 requests × $0.20/million = ~$0.0002 (free tier: 1M requests).
-  - API Gateway: 1,000 requests × $3.50/million × 12 = ~$0.042 (free tier: 1M calls).
-- **Zipped Source**: 100 MB × $0.00099/GB × 12 = ~$0.0012 (not free tier).
-- **Route 53**: ~$0.50/month + $12/year = ~$18.
-- **Total First Year**:
-  - ~$1.35 (free tier covers S3 Standard, CloudFront, DynamoDB, Lambda, API Gateway).
-  - With Route 53: ~$19.35.
-- **School Files**: 1 TB in Deep Archive (not free tier) = ~$31/year (S3-IA → Glacier → Deep Archive, ~$0.05 PUT for 5,010 files with zipped projects).
+## Step 10: Lessons Learned
+- **Angular 19**: Standalone components and reactive forms simplify development.
+- **CloudFront**: OAC secures S3; 403/404 redirects enable SPA routing.
+- **S3**: Upload `dist/blog-app/` contents to bucket root.
+- **OAC**: Create via **Security** → **Origin access** or CLI if Console fails.
+- **Costs**: Minimal with free tier; Deep Archive for school files (~$31/year).
+- **AWS**: Scalable for dynamic blogs and large datasets.
 
-## Integration with School Files
-- **Storage**: Store zipped Angular projects and school files in `school-files-archive-<yourname>` (S3-IA → Glacier → Deep Archive, ~$31/year for 1 TB, not free tier).
-- **Access**: Restore Glacier/Deep Archive files (~$0.01–$0.02/GB, free tier: 100 GB egress) for edits.
-- **Sharing**: Use presigned URLs (~$0.09/GB) or CloudFront (~$0.085/GB, free tier) for videos/projects.
-- **Lifecycle**: No transitions from Glacier to Standard; restore manually for access.
-
-## Lessons Learned
-- **Angular 19**: Standalone components and `ReactiveFormsModule` (not `provideReactiveForms`) streamline reactive forms.
-- **AWS**: S3+CloudFront is cost-effective for static hosting; serverless backend minimizes costs.
-- **PUT Charges**: Zipping Angular source saves ~$0.01 per 1,000 files.
-- **Glacier/Deep Archive**: Not in free tier, use for archival (~$1–$4/TB/month), restore for hosting.
+## Step 11: Troubleshooting
+- **OAC Not Visible**:
+  - Check **CloudFront** → **Security** → **Origin access** or **Distributions** → **Origins** → **Edit**.
+  - Use CLI: `aws cloudfront create-origin-access-control ...`.
+  - Verify IAM permissions (`cloudfront:CreateOriginAccessControl`).
+- **404 Errors**: Ensure `index.html` is at `s3://your-blog-bucket/index.html`.
+- **Routing Issues**: Verify 403/404 redirects to `/index.html`.
+- **API Errors**: Check CORS and authentication (`Authorization: NONE`, `API Key Required: false`).
+- **Stale Content**: Invalidate cache (`/*`, ~$0.005, free tier).
