@@ -1,6 +1,6 @@
-# Tutorial: Building an Angular 19 Blog and Hosting with CloudFront, S3, API Gateway, Lambda, and DynamoDB
+# Tutorial: Building an Angular 19 Blog with CloudFront, S3, API Gateway, Lambda, DynamoDB, and PUT Support
 
-This tutorial guides you through creating an **Angular 19 standalone blog application**, hosting its static files (`dist/blog-app/`) on **Amazon S3** with **CloudFront** as a CDN, and integrating dynamic CRUD operations via **AWS API Gateway**, **Lambda**, and **DynamoDB**. It addresses the issue of not seeing the **Create Control Setting** option for **Origin Access Control (OAC)** in CloudFront, ensuring secure S3 access. The setup supports your requirements: `main.ts`, `app.config.ts`, `app.routes.ts`, styled components with dark theme, reactive forms, S3-hosted assets, and school file storage (zipped Angular projects in S3-IA → Glacier → Deep Archive, not in free tier). It resolves prior issues (CORS for `DELETE /posts/{postId}`, authentication for `GET /posts/{postId}`) and minimizes costs (~$1.35/year for blog, free tier; ~$31/year for 1 TB school files).
+This tutorial guides you through creating an **Angular 19 standalone blog application**, hosting its static files (`dist/blog-app/`) on **Amazon S3** with **CloudFront** as a CDN, and integrating dynamic CRUD operations (including `PUT` for updating posts) via **AWS API Gateway**, **Lambda**, and **DynamoDB**. It addresses the CORS error (`"CORS Missing Allow Origin"`) for the `PUT` request to `https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod/posts/1753939045578`, ensuring proper CORS configuration. The setup supports your requirements: `main.ts`, `app.config.ts`, `app.routes.ts`, styled components with dark theme, reactive forms, **S3 + CloudFront**, **DynamoDB**, **Lambda** with `createPost`, `readPosts`, `deletePost`, `getPost`, and a new `updatePost`, and **API Gateway** at `https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod`. It also supports school file storage (zipped Angular projects in S3-IA → Glacier → Deep Archive, not in free tier) and minimizes costs (~$1.35/year for blog, free tier; ~$31/year for 1 TB school files).
 
 ## Prerequisites
 - **AWS Account**: Sign up at [aws.amazon.com](https://aws.amazon.com) (free tier: 1 TB CloudFront egress, 1,000 invalidations, 5 GB S3 Standard, 2,000 PUT requests, 1M API Gateway calls, 25 GB DynamoDB, 1M Lambda requests).
@@ -302,16 +302,35 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
              <li class="list-group-item d-flex justify-content-between" *ngFor="let post of posts">
                {{post.title}}
                <div>
+                 <button class="btn btn-warning btn-sm me-2" (click)="editPost(post)">Edit</button>
                  <button class="btn btn-danger btn-sm" (click)="deletePost(post.postId)">Delete</button>
                </div>
              </li>
            </ul>
+           <form *ngIf="editingPost" [formGroup]="postForm" (ngSubmit)="onUpdate()">
+             <h3 class="mt-5">Edit Post</h3>
+             <div class="mb-3">
+               <label class="form-label">Title</label>
+               <input type="text" class="form-control" formControlName="title">
+             </div>
+             <div class="mb-3">
+               <label class="form-label">Content</label>
+               <textarea class="form-control" formControlName="content"></textarea>
+             </div>
+             <div class="mb-3">
+               <label class="form-label">Image URL</label>
+               <input type="text" class="form-control" formControlName="imageUrl">
+             </div>
+             <button type="submit" class="btn btn-primary" [disabled]="postForm.invalid">Update Post</button>
+             <button type="button" class="btn btn-secondary ms-2" (click)="cancelEdit()">Cancel</button>
+           </form>
          </div>
        `
      })
      export class AdminComponent implements OnInit {
        postForm: FormGroup;
        posts: BlogPost[] = [];
+       editingPost: BlogPost | null = null;
 
        constructor(private fb: FormBuilder, private blogService: BlogService) {
          this.postForm = this.fb.group({
@@ -337,6 +356,35 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
          });
        }
 
+       editPost(post: BlogPost) {
+         this.editingPost = post;
+         this.postForm.patchValue({
+           title: post.title,
+           content: post.content,
+           imageUrl: post.imageUrl,
+           createdAt: post.createdAt
+         });
+       }
+
+       onUpdate() {
+         if (this.editingPost) {
+           const updatedPost: BlogPost = {
+             postId: this.editingPost.postId,
+             ...this.postForm.value
+           };
+           this.blogService.updatePost(this.editingPost.postId, updatedPost).subscribe(() => {
+             const index = this.posts.findIndex(p => p.postId === this.editingPost!.postId);
+             this.posts[index] = updatedPost;
+             this.cancelEdit();
+           });
+         }
+       }
+
+       cancelEdit() {
+         this.editingPost = null;
+         this.postForm.reset({ createdAt: new Date().toISOString() });
+       }
+
        deletePost(postId: string) {
          this.blogService.deletePost(postId).subscribe(() => {
            this.posts = this.posts.filter(p => p.postId !== postId);
@@ -347,7 +395,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
 8. **Test Locally**:
    - Run `ng serve`.
    - Access `http://localhost:4200`.
-   - Verify navigation (`/`, `/blog`, `/post/:id`, `/admin`), styling (dark theme, fixed nav, responsive grid), and form functionality.
+   - Verify navigation (`/`, `/blog`, `/post/:id`, `/admin`), styling (dark theme, fixed nav, responsive grid), and form functionality (create, edit, delete posts).
 
 ## Step 2: Set Up AWS Backend
 1. **Create DynamoDB Table**:
@@ -356,7 +404,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
    - **Partition key**: `postId` (String).
    - **Billing mode**: Provisioned (1 RCU/WCU, free tier: 25 GB).
 2. **Create Lambda Functions**:
-   - In **Lambda** → **Create function** for each: `createPost`, `readPosts`, `getPost`, `deletePost`.
+   - In **Lambda** → **Create function** for each: `createPost`, `readPosts`, `getPost`, `deletePost`, `updatePost`.
    - **Runtime**: Python 3.12.
    - **IAM Role**:
      ```json
@@ -365,12 +413,22 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
          "Statement": [
              {
                  "Effect": "Allow",
-                 "Action": ["dynamodb:PutItem", "dynamodb:Scan", "dynamodb:GetItem", "dynamodb:DeleteItem"],
+                 "Action": [
+                     "dynamodb:PutItem",
+                     "dynamodb:Scan",
+                     "dynamodb:GetItem",
+                     "dynamodb:DeleteItem",
+                     "dynamodb:UpdateItem"
+                 ],
                  "Resource": "arn:aws:dynamodb:us-west-1:371751795928:table/BlogPosts"
              },
              {
                  "Effect": "Allow",
-                 "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+                 "Action": [
+                     "logs:CreateLogGroup",
+                     "logs:CreateLogStream",
+                     "logs:PutLogEvents"
+                 ],
                  "Resource": "*"
              }
          ]
@@ -465,7 +523,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                        "headers": {
                            "Access-Control-Allow-Origin": "*",
                            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                           "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                           "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                        },
                        "body": json.dumps({"error": "postId is required"})
                    }
@@ -477,7 +535,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                        "headers": {
                            "Access-Control-Allow-Origin": "*",
                            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                           "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                           "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                        },
                        "body": json.dumps({"error": f"Post with postId {post_id} not found"})
                    }
@@ -486,7 +544,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                    "headers": {
                        "Access-Control-Allow-Origin": "*",
                        "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                       "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                       "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                    },
                    "body": json.dumps(post)
                }
@@ -496,7 +554,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                    "headers": {
                        "Access-Control-Allow-Origin": "*",
                        "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                       "Access-Control-Allow-Methods": "GET,DELETE,OPTIONS"
+                       "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                    },
                    "body": json.dumps({"error": str(e)})
                }
@@ -518,7 +576,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                        "headers": {
                            "Access-Control-Allow-Origin": "*",
                            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                           "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                           "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                        },
                        "body": json.dumps({"error": "postId is required"})
                    }
@@ -529,7 +587,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                        "headers": {
                            "Access-Control-Allow-Origin": "*",
                            "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                           "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                           "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                        },
                        "body": json.dumps({"error": f"Post with postId {post_id} not found"})
                    }
@@ -538,7 +596,7 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                    "headers": {
                        "Access-Control-Allow-Origin": "*",
                        "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                       "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                       "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                    },
                    "body": json.dumps({"message": f"Post {post_id} deleted"})
                }
@@ -548,15 +606,76 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
                    "headers": {
                        "Access-Control-Allow-Origin": "*",
                        "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-                       "Access-Control-Allow-Methods": "DELETE,GET,OPTIONS"
+                       "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
+                   },
+                   "body": json.dumps({"error": str(e)})
+               }
+       ```
+     - `updatePost` (new):
+       ```python
+       import json
+       import boto3
+
+       dynamodb = boto3.resource("dynamodb")
+       table = dynamodb.Table("BlogPosts")
+
+       def lambda_handler(event, context):
+           try:
+               post_id = event.get("pathParameters", {}).get("postId")
+               if not post_id:
+                   return {
+                       "statusCode": 400,
+                       "headers": {
+                           "Access-Control-Allow-Origin": "*",
+                           "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                           "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
+                       },
+                       "body": json.dumps({"error": "postId is required"})
+                   }
+               body = json.loads(event.get("body", "{}"))
+               post = {
+                   "postId": post_id,
+                   "title": body.get("title"),
+                   "content": body.get("content"),
+                   "imageUrl": body.get("imageUrl", ""),
+                   "createdAt": body.get("createdAt")
+               }
+               response = table.get_item(Key={"postId": post_id})
+               if "Item" not in response:
+                   return {
+                       "statusCode": 404,
+                       "headers": {
+                           "Access-Control-Allow-Origin": "*",
+                           "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                           "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
+                       },
+                       "body": json.dumps({"error": f"Post with postId {post_id} not found"})
+                   }
+               table.put_item(Item=post)
+               return {
+                   "statusCode": 200,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
+                   },
+                   "body": json.dumps({"message": f"Post {post_id} updated"})
+               }
+           except Exception as e:
+               return {
+                   "statusCode": 500,
+                   "headers": {
+                       "Access-Control-Allow-Origin": "*",
+                       "Access-Control-Allow-Headers": "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+                       "Access-Control-Allow-Methods": "GET,DELETE,PUT,OPTIONS"
                    },
                    "body": json.dumps({"error": str(e)})
                }
        ```
 3. **Configure API Gateway**:
-   - In **API Gateway** → **Create API** → **REST API** → Name: `BlogAPI`.
+   - In **API Gateway** → **APIs** → `BlogAPI`.
    - **Resources**:
-     - Create `/posts`:
+     - For `/posts`:
        - **POST**: Integration with `createPost` Lambda (Proxy integration).
        - **GET**: Integration with `readPosts` Lambda (Proxy integration).
        - **OPTIONS**: Mock integration, set headers:
@@ -565,24 +684,27 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
          Access-Control-Allow-Headers: Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token
          Access-Control-Allow-Methods: POST,GET,OPTIONS
          ```
-     - Create `/posts/{postId}`:
+     - For `/posts/{postId}`:
        - **GET**: Integration with `getPost` Lambda (Proxy integration).
        - **DELETE**: Integration with `deletePost` Lambda (Proxy integration).
+       - **PUT** (new):
+         - Create method: **PUT**.
+         - Integration: `updatePost` Lambda (Proxy integration).
+         - **Authorization**: `NONE`.
+         - **API Key Required**: `false`.
        - **OPTIONS**: Mock integration, set headers:
          ```
          Access-Control-Allow-Origin: *
          Access-Control-Allow-Headers: Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token
-         Access-Control-Allow-Methods: GET,DELETE,OPTIONS
+         Access-Control-Allow-Methods: GET,DELETE,PUT,OPTIONS
          ```
-   - **Method Request** (for all methods):
-     - **Authorization**: `NONE`.
-     - **API Key Required**: `false` (resolves "Missing Authentication Token").
    - **Enable CORS**:
      - Select `/posts` → **Actions** → **Enable CORS** → Check `POST`, `GET`, `OPTIONS`.
-     - Select `/posts/{postId}` → **Enable CORS** → Check `GET`, `DELETE`, `OPTIONS`.
+     - Select `/posts/{postId}` → **Actions** → **Enable CORS** → Check `GET`, `DELETE`, `PUT`, `OPTIONS`.
+     - Deploy changes to ensure CORS headers are applied.
    - **Deploy API**:
      - **Actions** → **Deploy API** → Stage: `prod`.
-     - Note endpoint: `https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod`.
+     - Verify endpoint: `https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod`.
 
 ## Step 3: Build and Upload Angular App to S3
 1. **Build App**:
@@ -696,23 +818,39 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
    - Open `https://<cloudfront-id>.cloudfront.net`.
    - Verify:
      - App loads (`index.html`).
-     - Routes work (`/`, `/blog`, `/post/1753938533864`, `/admin`).
-     - API calls succeed (`GET /posts`, `GET /posts/{postId}`, `DELETE /posts/{postId}`).
-     - Styling (dark theme, fixed nav, responsive grid) and forms work.
-2. **DevTools**:
+     - Routes work (`/`, `/blog`, `/post/1753939045578`, `/admin`).
+     - API calls succeed (`GET /posts`, `POST /posts`, `GET /posts/{postId}`, `PUT /posts/{postId}`, `DELETE /posts/{postId}`).
+     - Styling (dark theme, fixed nav, responsive grid) and forms (create, edit, delete) work.
+2. **Test PUT Request**:
+   - Use curl:
+     ```bash
+     curl -X PUT https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod/posts/1753939045578 \
+       -H "Content-Type: application/json" \
+       -d '{"postId":"1753939045578","title":"Updated Title","content":"Updated Content","imageUrl":"https://<cloudfront-id>.cloudfront.net/assets/post1.jpg","createdAt":"2025-07-31T09:53:00Z"}' -i
+     ```
+   - Expected response:
+     ```
+     HTTP/2 200
+     access-control-allow-origin: *
+     access-control-allow-headers: Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token
+     access-control-allow-methods: GET,DELETE,PUT,OPTIONS
+     {"message":"Post 1753939045578 updated"}
+     ```
+3. **DevTools**:
    - Open DevTools (F12) → **Network**.
    - Confirm static files load from `https://<cloudfront-id>.cloudfront.net`.
    - API calls return `200` with `Access-Control-Allow-Origin: *`.
-3. **Test S3 Access**:
+4. **Test S3 Access**:
    - `curl https://your-blog-bucket.s3.amazonaws.com/index.html` (should fail).
    - `curl https://<cloudfront-id>.cloudfront.net/index.html` (should work).
-4. **Troubleshooting**:
-   - **404**: Ensure `index.html` is at bucket root.
+5. **Troubleshooting**:
+   - **CORS Error**:
+     - Verify `/posts/{postId}` has `PUT` and `OPTIONS` methods with CORS enabled.
+     - Check `updatePost` Lambda returns CORS headers.
+     - Redeploy API Gateway: **Actions** → **Deploy API** → `prod`.
+   - **404**: Ensure `index.html` is at `s3://your-blog-bucket/index.html`.
    - **Routing Issues**: Verify 403/404 redirects to `/index.html`.
-   - **API Errors**: Check CORS and authentication (`Authorization: NONE`, `API Key Required: false`).
-   - **OAC Missing**:
-     - Navigate to **CloudFront** → **Security** → **Origin access**.
-     - Use CLI if needed (Step 4).
+   - **API Errors**: Confirm `Authorization: NONE`, `API Key Required: false`.
 
 ## Step 6: Add Custom Domain (Optional)
 1. **Register Domain**:
@@ -768,15 +906,24 @@ This tutorial guides you through creating an **Angular 19 standalone blog applic
 - **CloudFront**: OAC secures S3; 403/404 redirects enable SPA routing.
 - **S3**: Upload `dist/blog-app/` contents to bucket root.
 - **OAC**: Create via **Security** → **Origin access** or CLI if Console fails.
+- **CORS**: Enable CORS for all methods (`GET`, `POST`, `PUT`, `DELETE`, `OPTIONS`) in API Gateway.
 - **Costs**: Minimal with free tier; Deep Archive for school files (~$31/year).
 - **AWS**: Scalable for dynamic blogs and large datasets.
 
 ## Step 11: Troubleshooting
+- **CORS Error for PUT**:
+  - Verify `/posts/{postId}` has `PUT` and `OPTIONS` with CORS enabled.
+  - Check `updatePost` Lambda returns `Access-Control-Allow-Origin: *`.
+  - Redeploy API Gateway: **Actions** → **Deploy API** → `prod`.
+  - Test:
+    ```bash
+    curl -X OPTIONS https://8xspcdvz22.execute-api.us-west-1.amazonaws.com/prod/posts/1753939045578 -i
+    ```
+  - Expected headers: `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET,DELETE,PUT,OPTIONS`.
 - **OAC Not Visible**:
   - Check **CloudFront** → **Security** → **Origin access** or **Distributions** → **Origins** → **Edit**.
   - Use CLI: `aws cloudfront create-origin-access-control ...`.
   - Verify IAM permissions (`cloudfront:CreateOriginAccessControl`).
 - **404 Errors**: Ensure `index.html` is at `s3://your-blog-bucket/index.html`.
 - **Routing Issues**: Verify 403/404 redirects to `/index.html`.
-- **API Errors**: Check CORS and authentication (`Authorization: NONE`, `API Key Required: false`).
-- **Stale Content**: Invalidate cache (`/*`, ~$0.005, free tier).
+- **API Errors**: Confirm `Authorization: NONE`, `API Key Required: false`.
